@@ -412,6 +412,25 @@ struct vec2_t {
 
 };  // vec2_t
 
+
+template <typename type_t>
+struct rect2_t {
+
+  type_t dx() const {
+    return x1 - x0;
+  }
+
+  type_t dy() const {
+    return y1 - y0;
+  }
+
+  type_t x0, y0, x1, y1;
+};
+
+
+using rect2f_t = rect2_t<float>;
+using rect2i_t = rect2_t<int32_t>;
+
 using int2 = vec2_t<int32_t>;
 using int3 = vec3_t<int32_t>;
 using int4 = vec4_t<int32_t>;

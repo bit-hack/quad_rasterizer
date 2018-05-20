@@ -2,13 +2,6 @@
 #include "math.h"
 
 
-template <typename type_t>
-struct rect2_t {
-  type_t x0, y0, x1, y1;
-};
-
-using rect2f_t = rect2_t<float>;
-
 template <typename vec_t>
 struct clip_t {
 

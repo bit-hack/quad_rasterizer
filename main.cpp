@@ -15,17 +15,21 @@ constexpr float len_sqr(const float2 &a, const float2 &b) {
   return (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y);
 }
 
+
 constexpr int32_t minv(int32_t a, int32_t b) {
   return a < b ? a : b;
 }
+
 
 constexpr int32_t maxv(int32_t a, int32_t b) {
   return a > b ? a : b;
 }
 
+
 constexpr int32_t clampv(int32_t lo, int32_t v, int32_t hi) {
   return minv(hi, maxv(lo, v));
 }
+
 
 // return true if a triangle is backfacing
 bool is_backface(const float2 &a, const float2 &b, const float2 &c) {
@@ -35,6 +39,7 @@ bool is_backface(const float2 &a, const float2 &b, const float2 &c) {
   const float w2 = c.y - b.y;
   return 0.f > (v1 * w2 - v2 * w1);
 }
+
 
 // return true if 'p' falls inside triangle 'a, b, c'
 bool point_in_tri(const float2 &a, const float2 &b, const float2 &c,
@@ -60,6 +65,7 @@ bool point_in_tri(const float2 &a, const float2 &b, const float2 &c,
   return (u >= 0) && (v >= 0) && (u + v < 1);
 }
 
+
 // plot a pixel to the screen
 void plot(SDL_Surface *surf, int32_t x, int32_t y, uint32_t rgb = 0xdadada) {
   assert(surf);
@@ -70,6 +76,8 @@ void plot(SDL_Surface *surf, int32_t x, int32_t y, uint32_t rgb = 0xdadada) {
   pix[x + y * surf->w] = rgb;
 }
 
+
+#if 0
 // calculate scaled edge function
 //
 // - scale the normals so points on the edge would be 0.f distance
@@ -97,6 +105,7 @@ tri_calc(const std::array<float2, 3> &t) {
   return std::array<float2, 3>{n12, n20, n01};
 }
 
+
 // evaluate edge functions at a point
 //
 std::array<float, 3> tri_eval(const std::array<float2, 3> &t,
@@ -113,6 +122,7 @@ std::array<float, 3> tri_eval(const std::array<float2, 3> &t,
   // return
   return std::array<float, 3>{e0, e1, e2};
 }
+
 
 void raster(SDL_Surface *surf, const std::array<float2, 3> &v) {
   const std::array<float2, 3> i = tri_calc(v);
@@ -138,6 +148,8 @@ void raster(SDL_Surface *surf, const std::array<float2, 3> &v) {
     jy[2] += i[2].y;
   }
 }
+#endif
+
 
 void draw_rect(SDL_Surface *surf, const rect2f_t &r, const uint32_t rgb) {
 
@@ -157,7 +169,148 @@ void draw_rect(SDL_Surface *surf, const rect2f_t &r, const uint32_t rgb) {
   }
 }
 
-void quad_tree(SDL_Surface *surf, clip_t<float2> &clip, const rect2f_t r) {
+
+// triangle setup
+//
+struct tri_setup_t {
+
+  // calculate scaled edge function
+  //
+  // - scale the normals so points on the edge would be 0.f distance
+  //   and the prime vertex would be at 1.f
+  //
+  std::array<float2, 3>
+  static tri_calc(const std::array<float2, 3> &t) {
+    // find edges
+    const float2 e01 = t[0] - t[1];
+    const float2 e12 = t[1] - t[2];
+    const float2 e20 = t[2] - t[0];
+    // edge normals
+    float2 n01 = float2::cross(e01);
+    float2 n12 = float2::cross(e12);
+    float2 n20 = float2::cross(e20);
+    // distance between edge and opposite vertex
+    const float d01 = float2::dot(n01, t[2] - t[0]);
+    const float d12 = float2::dot(n12, t[0] - t[1]);
+    const float d20 = float2::dot(n20, t[1] - t[2]);
+    // normalize to get interpolants
+    n01 /= d01;
+    n12 /= d12;
+    n20 /= d20;
+    // return interpolants for each vertex
+    return std::array<float2, 3>{n12, n20, n01};
+  }
+
+  tri_setup_t(const std::array<float2, 3> & t)
+    : _t(t)
+    , _i(tri_calc(t))
+  {
+  }
+
+  // evaluate edge functions as point 'p'
+  //
+  std::array<float, 3> eval(const float2 &p) const {
+    // vector to point on edge
+    const float2 d0 = p - _t[1];
+    const float2 d1 = p - _t[2];
+    const float2 d2 = p - _t[0];
+    // distance from edge
+    const float e0 = float2::dot(d0, _i[0]);
+    const float e1 = float2::dot(d1, _i[1]);
+    const float e2 = float2::dot(d2, _i[2]);
+    // return
+    return std::array<float, 3>{e0, e1, e2};
+  }
+
+  const std::array<float2, 3> _t;
+  const std::array<float2, 3> _i;
+};
+
+
+// rasterize in a rect with edge clipping
+void raster_clip(SDL_Surface *surf,
+                 const tri_setup_t &setup,
+                 const rect2f_t &r)
+{
+  // evaluate at rect origin
+  std::array<float, 3> jy = setup.eval(float2{r.x0, r.y0});
+  uint32_t *p = (uint32_t *)surf->pixels;
+  p += int(r.x0) + int(r.y0) * (surf->pitch / 4);
+  // todo: convert to int off the bat
+  const int32_t width  = int32_t(r.x1 - r.x0);
+  const int32_t height = int32_t(r.y1 - r.y0);
+  // y itterations
+  for (float y = 0; y < uint32_t(height); ++y) {
+    std::array<float, 3> jx = jy;
+    // x itterations
+    for (uint32_t x = 0; x < uint32_t(width); ++x) {
+      // note: clip test needed here
+      if (jx[0] > 0.f && jx[1] > 0.f && jx[2] > 0.f) {
+        const int cr = 0xff & int(jx[0] * 255.f);
+        const int cg = 0xff & int(jx[1] * 255.f);
+        const int cb = 0xff & int(jx[2] * 255.f);
+        p[x] = (cr << 16) | (cg << 8) | cb;
+      }
+      // advance x step
+      jx[0] += setup._i[0].x;
+      jx[1] += setup._i[1].x;
+      jx[2] += setup._i[2].x;
+    }
+    // advance y step
+    p += surf->pitch / 4;
+    jy[0] += setup._i[0].y;
+    jy[1] += setup._i[1].y;
+    jy[2] += setup._i[2].y;
+  }
+}
+
+
+// rasterize in a rect without edge clipping
+void raster_noclip(SDL_Surface *surf,
+                 const tri_setup_t &setup,
+                 const rect2f_t &r)
+{
+  // TODO: we could use fixed point here
+
+  // evaluate at rect origin
+  std::array<float, 3> jy = setup.eval(float2{r.x0, r.y0});
+  uint32_t *p = (uint32_t *)surf->pixels;
+  p += int(r.x0) + int(r.y0) * (surf->pitch / 4);
+  // todo: convert to int off the bat
+  const int32_t width  = int32_t(r.x1 - r.x0);
+  const int32_t height = int32_t(r.y1 - r.y0);
+  // y itterations
+  for (float y = 0; y < uint32_t(height); ++y) {
+    std::array<float, 3> jx = jy;
+    // x itterations
+    for (uint32_t x = 0; x < uint32_t(width); ++x) {
+      // note: no clip test needed here
+      const int cr = 0xff & int(jx[0] * 255.f);
+      const int cg = 0xff & int(jx[1] * 255.f);
+      const int cb = 0xff & int(jx[2] * 255.f);
+      p[x] = (cr << 16) | (cg << 8) | cb;
+      // advance x step
+      jx[0] += setup._i[0].x;
+      jx[1] += setup._i[1].x;
+      jx[2] += setup._i[2].x;
+    }
+    // advance y step
+    p += surf->pitch / 4;
+    jy[0] += setup._i[0].y;
+    jy[1] += setup._i[1].y;
+    jy[2] += setup._i[2].y;
+  }
+}
+
+
+void quad_tree(SDL_Surface *surf,
+               const tri_setup_t &setup,
+               clip_t<float2> &clip,
+               const rect2f_t r) {
+
+  // TODO: use fast quad tree level insertion
+
+  // TODO: make this non recursive
 
   draw_rect(surf, r, 0x303030);
 
@@ -168,25 +321,29 @@ void quad_tree(SDL_Surface *surf, clip_t<float2> &clip, const rect2f_t r) {
 
   // if we can clip further
   if ((r.x1 - r.x0) > 32 && (r.y1 - r.y0) > 32) {
-
     // mid point
     const float mx = (r.x0 + r.x1) * .5f;
     const float my = (r.y0 + r.y1) * .5f;
-
-    quad_tree(surf, clip, rect2f_t{r.x0, r.y0, mx,   my  });
-    quad_tree(surf, clip, rect2f_t{mx,   r.y0, r.x1, my  });
-    quad_tree(surf, clip, rect2f_t{r.x0, my,   mx,   r.y1});
-    quad_tree(surf, clip, rect2f_t{mx,   my,   r.x1, r.y1});
+    // visit each quadrant
+    quad_tree(surf, setup, clip, rect2f_t{r.x0, r.y0, mx,   my  });
+    quad_tree(surf, setup, clip, rect2f_t{mx,   r.y0, r.x1, my  });
+    quad_tree(surf, setup, clip, rect2f_t{r.x0, my,   mx,   r.y1});
+    quad_tree(surf, setup, clip, rect2f_t{mx,   my,   r.x1, r.y1});
   }
   else {
+    // if triangle can be proven inside triangle, no need to clip
     if (clip.trivial_in(r)) {
+      raster_noclip(surf, setup, r);
       draw_rect(surf, r, 0x107010);
     }
     else {
+      // triangle cant be proven in, raster with clip
+      raster_clip(surf, setup, r);
       draw_rect(surf, r, 0x3030a0);
     }
   }
 }
+
 
 // find the nearest vertex to point p
 float2 *nearest(std::array<float2, 3> &tri, const float2 &p) {
@@ -203,6 +360,7 @@ float2 *nearest(std::array<float2, 3> &tri, const float2 &p) {
   }
   return best < 256.f ? out : nullptr;
 }
+
 
 // program entry
 int main(const int argc, const char **args) {
@@ -242,7 +400,7 @@ int main(const int argc, const char **args) {
       case SDL_MOUSEBUTTONDOWN:
         if (!drag) {
           const float2 p =
-              float2{float(event.button.x), float(event.button.y)};
+            float2{float(event.button.x), float(event.button.y)};
           // check for drags
           drag = nearest(tri, p);
           if (!drag) {
@@ -278,10 +436,13 @@ int main(const int argc, const char **args) {
     }
 
     // draw triangle
+#if 0
     raster(surf, tri);
+#else
     clip_t<float2> clip{tri[0], tri[1], tri[2]};
-    quad_tree(surf, clip, rect2f_t {0, 0, 512, 512});
-
+    tri_setup_t setup{tri};
+    quad_tree(surf, setup, clip, rect2f_t {0, 0, 512, 512});
+#endif
     // draw vertex nodes
     for (const auto &p : tri) {
       SDL_Rect r = {int16_t(p.x - 3), int16_t(p.y - 3), 7, 7};
