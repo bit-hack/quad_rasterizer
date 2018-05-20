@@ -139,7 +139,7 @@ void raster(SDL_Surface *surf, const std::array<float2, 3> &v) {
   }
 }
 
-void draw_rect(SDL_Surface *surf, const rect2f_t &r) {
+void draw_rect(SDL_Surface *surf, const rect2f_t &r, const uint32_t rgb) {
 
   uint32_t *p = (uint32_t*)surf->pixels;
 
@@ -147,38 +147,44 @@ void draw_rect(SDL_Surface *surf, const rect2f_t &r) {
   int y0 = int(r.y0), y1 = int(r.y1-1);
 
   for (int x = x0; x <= x1; ++x) {
-    p[y0 * 512 + x] = 0x303030;
-    p[y1 * 512 + x] = 0x303030;
+    p[y0 * 512 + x] = rgb;
+    p[y1 * 512 + x] = rgb;
   }
 
   for (int y = y0; y <= y1; ++y) {
-    p[y * 512 + x0] = 0x303030;
-    p[y * 512 + x1] = 0x303030;
+    p[y * 512 + x0] = rgb;
+    p[y * 512 + x1] = rgb;
   }
 }
 
-void quad_tree(SDL_Surface *surf, const std::array<float2, 3> &v,
-               const rect2f_t r) {
+void quad_tree(SDL_Surface *surf, clip_t<float2> &clip, const rect2f_t r) {
 
-  // draw bounds
-  draw_rect(surf, r);
+  draw_rect(surf, r, 0x303030);
 
   // if this triangle is clipped
-  clip_t clip;
-  if (!clip.tri_vis(v[0], v[1], v[2], r)) {
+  if (!clip.tri_vis(r)) {
     return;
   }
 
   // if we can clip further
   if ((r.x1 - r.x0) > 32 && (r.y1 - r.y0) > 32) {
+
     // mid point
     const float mx = (r.x0 + r.x1) * .5f;
     const float my = (r.y0 + r.y1) * .5f;
 
-    quad_tree(surf, v, rect2f_t{r.x0, r.y0, mx,   my  });
-    quad_tree(surf, v, rect2f_t{mx,   r.y0, r.x1, my  });
-    quad_tree(surf, v, rect2f_t{r.x0, my,   mx,   r.y1});
-    quad_tree(surf, v, rect2f_t{mx,   my,   r.x1, r.y1});
+    quad_tree(surf, clip, rect2f_t{r.x0, r.y0, mx,   my  });
+    quad_tree(surf, clip, rect2f_t{mx,   r.y0, r.x1, my  });
+    quad_tree(surf, clip, rect2f_t{r.x0, my,   mx,   r.y1});
+    quad_tree(surf, clip, rect2f_t{mx,   my,   r.x1, r.y1});
+  }
+  else {
+    if (clip.trivial_in(r)) {
+      draw_rect(surf, r, 0x107010);
+    }
+    else {
+      draw_rect(surf, r, 0x3030a0);
+    }
   }
 }
 
@@ -211,9 +217,10 @@ int main(const int argc, const char **args) {
   }
 
   std::array<float2, 3> tri = {
-    float2{64, 512 - 64},
     float2{256, 64},
-    float2{512 - 64, 512 - 64}};
+    float2{512 - 64, 512 - 64},
+    float2{64, 512 - 64}};
+
   float2 *drag = nullptr;
   bool dragall = false;
 
@@ -272,7 +279,8 @@ int main(const int argc, const char **args) {
 
     // draw triangle
     raster(surf, tri);
-    quad_tree(surf, tri, rect2f_t {0, 0, 512, 512});
+    clip_t<float2> clip{tri[0], tri[1], tri[2]};
+    quad_tree(surf, clip, rect2f_t {0, 0, 512, 512});
 
     // draw vertex nodes
     for (const auto &p : tri) {
